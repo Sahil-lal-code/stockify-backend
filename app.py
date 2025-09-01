@@ -7,6 +7,9 @@ import numpy as np
 import os
 import traceback
 import gc
+import yfinance as yf
+from datetime import datetime, timedelta
+import pandas as pd
 
 app = Flask(__name__)
 
@@ -51,10 +54,10 @@ def predict():
         print(f"Processing: {ticker}, {model_name}, {days} days")
         
         # Fetch and process data
-        stock_data, error = predictor.fetch_data(ticker)
-        if error:
-            print("Error fetching data:", error)
-            return jsonify({'error': error, 'status': 'error'}), 400
+        stock_data, error_message = predictor.fetch_data(ticker)
+        if error_message and "mock data" not in error_message:
+            print("Error fetching data:", error_message)
+            return jsonify({'error': error_message, 'status': 'error'}), 400
         
         print("Data fetched successfully")
             
@@ -88,6 +91,10 @@ def predict():
             'plot2': plot_url2,
             'status': 'success'
         }
+        
+        # Add warning if using mock data
+        if error_message and "mock data" in error_message:
+            response['warning'] = error_message
         
         # Clean up memory
         del stock_data, processed_data, model, predictions
@@ -136,6 +143,43 @@ def test_endpoint():
             'test_data': [100, 105, 110, 115, 120]  # Mock predictions
         })
     except Exception as e:
+        return jsonify({'error': str(e), 'status': 'error'}), 500
+
+@app.route('/debug/<ticker>', methods=['GET'])
+def debug_ticker(ticker):
+    """Debug endpoint to check yfinance data"""
+    try:
+        print(f"Debugging ticker: {ticker}")
+        
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=60)
+        
+        print(f"Testing yfinance for {ticker} from {start_date} to {end_date}")
+        
+        # Method 1: Direct download
+        data1 = yf.download(ticker, start=start_date, end=end_date, progress=False, auto_adjust=True)
+        print(f"Method 1 - Download shape: {data1.shape if data1 is not None else 'None'}")
+        
+        # Method 2: Ticker object
+        ticker_obj = yf.Ticker(ticker)
+        data2 = ticker_obj.history(period="60d")
+        print(f"Method 2 - History shape: {data2.shape if data2 is not None else 'None'}")
+        
+        # Method 3: Info
+        info = ticker_obj.info
+        print(f"Ticker info available: {bool(info)}")
+        
+        return jsonify({
+            'ticker': ticker,
+            'method1_shape': data1.shape if data1 is not None else 'None',
+            'method2_shape': data2.shape if data2 is not None else 'None',
+            'info_available': bool(info),
+            'status': 'success'
+        })
+        
+    except Exception as e:
+        print(f"Debug error: {str(e)}")
+        traceback.print_exc()
         return jsonify({'error': str(e), 'status': 'error'}), 500
 
 # CORS helper functions
