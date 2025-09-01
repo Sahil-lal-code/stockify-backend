@@ -5,11 +5,12 @@ import json
 from datetime import datetime
 import numpy as np
 import os
+import traceback
+import gc
 
 app = Flask(__name__)
 
 # Configure CORS for production - allow all origins
-# In production, you might want to restrict this to your Netlify domain
 CORS(app, resources={
     r"/*": {
         "origins": "*",  # Allow all origins
@@ -34,27 +35,46 @@ def predict():
         return _build_cors_preflight_response()
     
     try:
+        print("Received prediction request")
         data = request.get_json()
+        print("Request data:", data)
+        
         ticker = data['ticker'].upper()
         model_name = data.get('model', 'Linear Regression')
         days = int(data.get('days', 1))
         
+        # Validate input - limit to prevent overload
+        if days > 10:
+            days = 10
+            print(f"Days limited to 10 for performance")
+        
+        print(f"Processing: {ticker}, {model_name}, {days} days")
+        
         # Fetch and process data
         stock_data, error = predictor.fetch_data(ticker)
         if error:
+            print("Error fetching data:", error)
             return jsonify({'error': error, 'status': 'error'}), 400
+        
+        print("Data fetched successfully")
             
         processed_data = predictor.preprocess_data(stock_data)
         model, r2, mse = predictor.train_model(processed_data, model_name)
+        
+        print("Model trained successfully")
         
         # Make predictions
         last_data_point = np.array(processed_data.drop(['Prediction'], axis=1))[-1:]
         predictions = predictor.predict(model, last_data_point, days)
         
+        print("Predictions generated")
+        
         # Generate plots
         plot_url1, plot_url2 = predictor.get_plots(stock_data, predictions, ticker)
         
-        # Create properly formatted response
+        print("Plots generated")
+        
+        # Create response
         response = {
             'ticker': ticker,
             'current_price': round(float(stock_data['Close'][-1]), 2),
@@ -69,13 +89,20 @@ def predict():
             'status': 'success'
         }
         
-        # Debug print
-        print("Complete response being sent:", json.dumps(response, indent=2))
+        # Clean up memory
+        del stock_data, processed_data, model, predictions
+        gc.collect()
         
+        print("Sending response")
         return _corsify_actual_response(jsonify(response))
         
     except Exception as e:
-        return _corsify_actual_response(jsonify({'error': str(e), 'status': 'error'})), 500
+        print("Error in prediction:", str(e))
+        traceback.print_exc()
+        return _corsify_actual_response(jsonify({
+            'error': 'Internal server error during prediction',
+            'status': 'error'
+        })), 500
 
 @app.route('/popular', methods=['GET', 'OPTIONS'])
 def popular_stocks():
@@ -98,6 +125,18 @@ def popular_stocks():
 def health_check():
     """Health check endpoint for Render"""
     return jsonify({'status': 'healthy', 'message': 'Server is running'})
+
+@app.route('/test', methods=['GET'])
+def test_endpoint():
+    """Simple test endpoint without ML"""
+    try:
+        return jsonify({
+            'message': 'Test successful', 
+            'status': 'success',
+            'test_data': [100, 105, 110, 115, 120]  # Mock predictions
+        })
+    except Exception as e:
+        return jsonify({'error': str(e), 'status': 'error'}), 500
 
 # CORS helper functions
 def _build_cors_preflight_response():
