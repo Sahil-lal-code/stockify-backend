@@ -10,33 +10,24 @@ import gc
 import yfinance as yf
 from datetime import datetime, timedelta
 import pandas as pd
-import time  # Added for rate limiting
+import time
 
 app = Flask(__name__)
 
-# Configure CORS for production - allow all origins
-CORS(app, resources={
-    r"/*": {
-        "origins": "*",  # Allow all origins
-        "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type", "Authorization"]
-    }
-})
-
-# Handle preflight requests
-@app.after_request
-def after_request(response):
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    return response
+# Configure CORS properly - ONLY ONCE
+CORS(app)
 
 predictor = StockPredictor()
 
 @app.route('/predict', methods=['POST', 'OPTIONS'])
 def predict():
     if request.method == 'OPTIONS':
-        return _build_cors_preflight_response()
+        # Handle preflight requests properly
+        response = jsonify({'message': 'CORS preflight'})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
+        response.headers.add("Access-Control-Allow-Methods", "POST, OPTIONS")
+        return response
     
     try:
         print("Received prediction request")
@@ -102,20 +93,25 @@ def predict():
         gc.collect()
         
         print("Sending response")
-        return _corsify_actual_response(jsonify(response))
+        return jsonify(response)
         
     except Exception as e:
         print("Error in prediction:", str(e))
         traceback.print_exc()
-        return _corsify_actual_response(jsonify({
+        return jsonify({
             'error': 'Internal server error during prediction',
             'status': 'error'
-        })), 500
+        }), 500
 
 @app.route('/popular', methods=['GET', 'OPTIONS'])
 def popular_stocks():
     if request.method == 'OPTIONS':
-        return _build_cors_preflight_response()
+        # Handle preflight for popular endpoint
+        response = jsonify({'message': 'CORS preflight'})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
+        response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
+        return response
     
     popular = [
         {'ticker': 'AAPL', 'name': 'Apple Inc.'},
@@ -127,7 +123,7 @@ def popular_stocks():
         {'ticker': 'NVDA', 'name': 'NVIDIA Corporation'},
         {'ticker': 'JPM', 'name': 'JPMorgan Chase & Co.'}
     ]
-    return _corsify_actual_response(jsonify(popular))
+    return jsonify(popular)
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -141,26 +137,31 @@ def test_endpoint():
         return jsonify({
             'message': 'Test successful', 
             'status': 'success',
-            'test_data': [100, 105, 110, 115, 120]  # Mock predictions
+            'test_data': [100, 105, 110, 115, 120]
         })
     except Exception as e:
         return jsonify({'error': str(e), 'status': 'error'}), 500
 
-@app.route('/debug/<ticker>', methods=['GET'])
+@app.route('/debug/<ticker>', methods=['GET', 'OPTIONS'])
 def debug_ticker(ticker):
+    if request.method == 'OPTIONS':
+        # Handle preflight for debug endpoint
+        response = jsonify({'message': 'CORS preflight'})
+        response.headers.add("Access-Control-Allow-Origin", "*")
+        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
+        response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
+        return response
+    
     """Debug endpoint to check yfinance data"""
     try:
         print(f"Debugging ticker: {ticker}")
-        
-        # Add rate limiting
-        time.sleep(1)  # Wait 1 second between debug requests
+        time.sleep(1)
         
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=7)  # Shorter period for debug
+        start_date = end_date - timedelta(days=7)
         
         print(f"Testing yfinance for {ticker} from {start_date} to {end_date}")
         
-        # Method 1: Direct download with timeout
         try:
             data1 = yf.download(ticker, start=start_date, end=end_date, 
                                progress=False, auto_adjust=True, timeout=5)
@@ -168,7 +169,6 @@ def debug_ticker(ticker):
         except Exception as e:
             shape1 = f"Error: {str(e)}"
         
-        # Don't try method 2 if method 1 failed to avoid more rate limiting
         shape2 = "Skipped to avoid rate limiting"
         
         return jsonify({
@@ -183,18 +183,6 @@ def debug_ticker(ticker):
         print(f"Debug error: {str(e)}")
         traceback.print_exc()
         return jsonify({'error': str(e), 'status': 'error'}), 500
-
-# CORS helper functions
-def _build_cors_preflight_response():
-    response = jsonify({'message': 'CORS preflight'})
-    response.headers.add("Access-Control-Allow-Origin", "*")
-    response.headers.add("Access-Control-Allow-Headers", "*")
-    response.headers.add("Access-Control-Allow-Methods", "*")
-    return response
-
-def _corsify_actual_response(response):
-    response.headers.add("Access-Control-Allow-Origin", "*")
-    return response
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
