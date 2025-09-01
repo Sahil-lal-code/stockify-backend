@@ -12,6 +12,8 @@ import matplotlib.pyplot as plt
 import io
 import base64
 import gc
+import time
+import random
 
 class StockPredictor:
     def __init__(self):
@@ -20,39 +22,50 @@ class StockPredictor:
             "Random Forest": RandomForestRegressor(n_estimators=50, random_state=42),
         }
         self.current_model = "Linear Regression"
+        self.last_request_time = 0
+        self.request_delay = 2  # seconds between requests
 
     def fetch_data(self, ticker, days=60):
+        # Rate limiting: wait between requests
+        current_time = time.time()
+        time_since_last_request = current_time - self.last_request_time
+        if time_since_last_request < self.request_delay:
+            sleep_time = self.request_delay - time_since_last_request
+            print(f"Rate limiting: sleeping for {sleep_time:.2f} seconds")
+            time.sleep(sleep_time)
+        
+        self.last_request_time = time.time()
+        
         end_date = datetime.now()
         start_date = end_date - timedelta(days=days)
         
         print(f"Fetching data for {ticker} from {start_date} to {end_date}")
 
         try:
-            # Try multiple approaches to fetch data
-            data = yf.download(
-                ticker, 
-                start=start_date, 
-                end=end_date, 
-                progress=False,
-                auto_adjust=True
-            )
+            # Try with retries and rate limiting
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    data = yf.download(
+                        ticker, 
+                        start=start_date, 
+                        end=end_date, 
+                        progress=False,
+                        auto_adjust=True,
+                        timeout=10  # Add timeout
+                    )
+                    break  # Success, break out of retry loop
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        raise e
+                    print(f"Attempt {attempt + 1} failed, retrying...")
+                    time.sleep(2)  # Wait before retry
             
             print(f"Downloaded data shape: {data.shape if data is not None else 'None'}")
             
             if data is None or data.empty:
-                print("Data is empty, trying alternative approach...")
-                # Try with a ticker object instead
-                ticker_obj = yf.Ticker(ticker)
-                data = ticker_obj.history(period=f"{days}d")
-                print(f"Ticker object data shape: {data.shape if data is not None else 'None'}")
-            
-            if data is None or data.empty:
-                print("Both methods failed, generating mock data...")
-                # If yfinance fails, generate mock data
-                dates = pd.date_range(end=end_date, periods=days, freq='D')
-                mock_prices = np.random.normal(150, 20, days).cumsum()  # Random walk
-                data = pd.DataFrame({'Close': mock_prices}, index=dates)
-                return data, "Using mock data (yfinance failed)"
+                print("Data is empty, generating mock data...")
+                return self.generate_mock_data(days, end_date), "Using mock data (yfinance failed)"
             
             # Ensure we have the right columns
             if 'Close' not in data.columns:
@@ -68,25 +81,38 @@ class StockPredictor:
                 data = data[['Close']].copy()
             
             print(f"Final data shape: {data.shape}")
-            print(f"Data range: {data.index.min()} to {data.index.max()}")
-            print(f"Sample data: {data.head().to_dict()}")
-            
             return data, None
 
         except Exception as e:
             error_msg = f"Error fetching data for {ticker}: {str(e)}"
             print(error_msg)
-            # Generate mock data on error
-            dates = pd.date_range(end=end_date, periods=days, freq='D')
-            mock_prices = np.random.normal(150, 20, days).cumsum()
-            data = pd.DataFrame({'Close': mock_prices}, index=dates)
-            return data, "Using mock data (yfinance error)"
+            return self.generate_mock_data(days, end_date), "Using mock data (yfinance error)"
+
+    def generate_mock_data(self, days, end_date):
+        """Generate realistic mock stock data"""
+        print("Generating realistic mock data...")
+        dates = pd.date_range(end=end_date, periods=days, freq='D')
+        
+        # Create more realistic mock data with trends and noise
+        base_price = 150 + random.randint(-50, 50)
+        trend = random.uniform(-2, 2)  # Daily trend
+        volatility = random.uniform(1, 3)  # Price volatility
+        
+        mock_prices = []
+        current_price = base_price
+        
+        for _ in range(days):
+            # Random walk with trend
+            current_price += trend + random.gauss(0, volatility)
+            current_price = max(10, current_price)  # Don't go below $10
+            mock_prices.append(current_price)
+        
+        data = pd.DataFrame({'Close': mock_prices}, index=dates)
+        return data
 
     def preprocess_data(self, data):
-        # Ensure flat column name
         data = data[["Close"]]
         data.columns = ["Close"]
-
         data["Prediction"] = data["Close"].shift(-1)
         data.dropna(inplace=True)
         return data
@@ -171,4 +197,4 @@ class StockPredictor:
         del img1, img2
         gc.collect()
 
-        return plot_url1, plot_url2  # Now returns two different plots
+        return plot_url1, plot_url2

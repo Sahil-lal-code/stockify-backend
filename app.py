@@ -10,6 +10,7 @@ import gc
 import yfinance as yf
 from datetime import datetime, timedelta
 import pandas as pd
+import time  # Added for rate limiting
 
 app = Flask(__name__)
 
@@ -151,30 +152,31 @@ def debug_ticker(ticker):
     try:
         print(f"Debugging ticker: {ticker}")
         
+        # Add rate limiting
+        time.sleep(1)  # Wait 1 second between debug requests
+        
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=60)
+        start_date = end_date - timedelta(days=7)  # Shorter period for debug
         
         print(f"Testing yfinance for {ticker} from {start_date} to {end_date}")
         
-        # Method 1: Direct download
-        data1 = yf.download(ticker, start=start_date, end=end_date, progress=False, auto_adjust=True)
-        print(f"Method 1 - Download shape: {data1.shape if data1 is not None else 'None'}")
+        # Method 1: Direct download with timeout
+        try:
+            data1 = yf.download(ticker, start=start_date, end=end_date, 
+                               progress=False, auto_adjust=True, timeout=5)
+            shape1 = data1.shape if data1 is not None else 'None'
+        except Exception as e:
+            shape1 = f"Error: {str(e)}"
         
-        # Method 2: Ticker object
-        ticker_obj = yf.Ticker(ticker)
-        data2 = ticker_obj.history(period="60d")
-        print(f"Method 2 - History shape: {data2.shape if data2 is not None else 'None'}")
-        
-        # Method 3: Info
-        info = ticker_obj.info
-        print(f"Ticker info available: {bool(info)}")
+        # Don't try method 2 if method 1 failed to avoid more rate limiting
+        shape2 = "Skipped to avoid rate limiting"
         
         return jsonify({
             'ticker': ticker,
-            'method1_shape': data1.shape if data1 is not None else 'None',
-            'method2_shape': data2.shape if data2 is not None else 'None',
-            'info_available': bool(info),
-            'status': 'success'
+            'method1_shape': str(shape1),
+            'method2_shape': shape2,
+            'status': 'success',
+            'note': 'Rate limiting protection active'
         })
         
     except Exception as e:
