@@ -7,6 +7,7 @@ import traceback
 import gc
 import yfinance as yf
 from datetime import datetime, timedelta
+import time  # <-- Add this import
 
 app = Flask(__name__)
 
@@ -128,18 +129,33 @@ def debug_ticker(ticker):
     try:
         print(f"Debugging ticker: {ticker}")
         
-        # Test with yfinance Ticker object
-        stock = yf.Ticker(ticker)
-        info = stock.info
-        history = stock.history(period="1mo")
+        # Add rate limiting
+        time.sleep(2)  # Wait 2 seconds between debug requests
         
-        return jsonify({
+        # Use download instead of Ticker to avoid rate limiting
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=30)
+        
+        data = yf.download(
+            ticker,
+            start=start_date,
+            end=end_date,
+            progress=False,
+            auto_adjust=True,
+            timeout=10
+        )
+        
+        response_data = {
             'ticker': ticker,
-            'info_keys': list(info.keys()) if info else 'No info',
-            'history_shape': history.shape if history is not None else 'No history',
-            'history_columns': list(history.columns) if history is not None else 'No columns',
+            'has_data': data is not None and not data.empty,
+            'data_points': len(data) if data is not None else 0,
+            'columns': list(data.columns) if data is not None else [],
+            'latest_data': data.tail(3).to_dict() if data is not None and not data.empty else {},
             'status': 'success'
-        })
+        }
+        
+        print(f"Debug response: {response_data}")
+        return jsonify(response_data)
         
     except Exception as e:
         print(f"Debug error: {str(e)}")

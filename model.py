@@ -13,6 +13,7 @@ import io
 import base64
 import gc
 import time
+import random
 
 class StockPredictor:
     def __init__(self):
@@ -22,10 +23,10 @@ class StockPredictor:
         }
         self.current_model = "Linear Regression"
         self.last_request_time = 0
-        self.request_delay = 2  # 2 seconds between API calls to avoid rate limiting
+        self.request_delay = 5  # Increased to 5 seconds between requests
 
     def fetch_data(self, ticker, days=60):
-        # Rate limiting
+        # Rate limiting - more aggressive to avoid 429 errors
         current_time = time.time()
         time_since_last_request = current_time - self.last_request_time
         if time_since_last_request < self.request_delay:
@@ -34,25 +35,25 @@ class StockPredictor:
         
         self.last_request_time = time.time()
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=days * 2)  # Get extra data
+        start_date = end_date - timedelta(days=days * 2)
         
         print(f"Fetching yfinance data for {ticker} for {days} days")
 
         try:
-            # Use yfinance Ticker object for more reliable data fetching
-            stock = yf.Ticker(ticker)
-            
-            # Get historical market data
-            data = stock.history(
+            # Use yfinance download instead of Ticker to avoid quoteSummary calls
+            data = yf.download(
+                ticker,
                 start=start_date,
                 end=end_date,
-                auto_adjust=True
+                progress=False,
+                auto_adjust=True,
+                timeout=15
             )
             
             if data is None or data.empty:
                 raise ValueError(f"No data available for ticker: {ticker}")
             
-            # Ensure we have the right columns - use Close price
+            # Use Close price
             if 'Close' not in data.columns:
                 raise ValueError("No Close price data found")
             
