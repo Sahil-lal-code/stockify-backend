@@ -39,28 +39,24 @@ class StockPredictor:
         print(f"Fetching yfinance data for {ticker} for {days} days")
 
         try:
-            data = yf.download(
-                ticker, 
-                start=start_date, 
-                end=end_date, 
-                progress=False,
-                auto_adjust=True,
-                timeout=10
+            # Use yfinance Ticker object for more reliable data fetching
+            stock = yf.Ticker(ticker)
+            
+            # Get historical market data
+            data = stock.history(
+                start=start_date,
+                end=end_date,
+                auto_adjust=True
             )
             
             if data is None or data.empty:
                 raise ValueError(f"No data available for ticker: {ticker}")
             
-            # Ensure we have the right columns
+            # Ensure we have the right columns - use Close price
             if 'Close' not in data.columns:
-                if 'Adj Close' in data.columns:
-                    data = data[['Adj Close']].copy()
-                    data.columns = ['Close']
-                    print("Using Adj Close instead of Close")
-                else:
-                    raise ValueError("No Close or Adj Close column found in the data")
-            else:
-                data = data[['Close']].copy()
+                raise ValueError("No Close price data found")
+            
+            data = data[['Close']].copy()
             
             # Get the most recent days
             data = data.tail(days)
@@ -68,7 +64,7 @@ class StockPredictor:
             if len(data) < 30:
                 raise ValueError(f"Insufficient data points ({len(data)}) for training. Need at least 30 days.")
             
-            print(f"yFinance success: {data.shape[0]} days of data")
+            print(f"yFinance success: {data.shape[0]} days of data for {ticker}")
             return data
             
         except Exception as e:

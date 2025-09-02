@@ -5,6 +5,8 @@ import numpy as np
 import os
 import traceback
 import gc
+import yfinance as yf
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
@@ -118,6 +120,30 @@ def test_endpoint():
             'test_data': [100, 105, 110, 115, 120]
         })
     except Exception as e:
+        return jsonify({'error': str(e), 'status': 'error'}), 500
+
+@app.route('/debug/<ticker>', methods=['GET'])
+def debug_ticker(ticker):
+    """Debug endpoint to check yfinance data"""
+    try:
+        print(f"Debugging ticker: {ticker}")
+        
+        # Test with yfinance Ticker object
+        stock = yf.Ticker(ticker)
+        info = stock.info
+        history = stock.history(period="1mo")
+        
+        return jsonify({
+            'ticker': ticker,
+            'info_keys': list(info.keys()) if info else 'No info',
+            'history_shape': history.shape if history is not None else 'No history',
+            'history_columns': list(history.columns) if history is not None else 'No columns',
+            'status': 'success'
+        })
+        
+    except Exception as e:
+        print(f"Debug error: {str(e)}")
+        traceback.print_exc()
         return jsonify({'error': str(e), 'status': 'error'}), 500
 
 if __name__ == '__main__':
