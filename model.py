@@ -13,6 +13,8 @@ import io
 import base64
 import gc
 import time
+import requests
+import os
 import random
 
 class StockPredictor:
@@ -23,10 +25,42 @@ class StockPredictor:
         }
         self.current_model = "Linear Regression"
         self.last_request_time = 0
-        self.request_delay = 5  # Increased to 5 seconds between requests
+        self.request_delay = 10
+        self.proxy_list = self.get_proxy_list()
+
+    def get_proxy_list(self):
+        """Get list of proxies - you'll need to replace these with working proxies"""
+        # Free public proxies (these change frequently and may not work)
+        # For production, use paid proxy services like Luminati, Smartproxy, etc.
+        return [
+            # HTTP proxies
+            'http://138.199.48.1:8443',
+            'http://162.0.220.234:80',
+            'http://45.95.147.406:8080',
+            'http://193.122.71.184:3128',
+            # Add more proxies or use a proxy service
+        ]
+
+    def get_random_proxy(self):
+        """Get a random proxy from the list"""
+        if not self.proxy_list:
+            return None
+        return random.choice(self.proxy_list)
+
+    def test_proxy(self, proxy):
+        """Test if a proxy is working"""
+        try:
+            test_response = requests.get(
+                'http://httpbin.org/ip',
+                proxies={'http': proxy, 'https': proxy},
+                timeout=10
+            )
+            return test_response.status_code == 200
+        except:
+            return False
 
     def fetch_data(self, ticker, days=60):
-        # Rate limiting - more aggressive to avoid 429 errors
+        # Rate limiting
         current_time = time.time()
         time_since_last_request = current_time - self.last_request_time
         if time_since_last_request < self.request_delay:
@@ -35,43 +69,61 @@ class StockPredictor:
         
         self.last_request_time = time.time()
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=days * 2)
+        start_date = end_date - timedelta(days=days * 3)
         
         print(f"Fetching yfinance data for {ticker} for {days} days")
 
-        try:
-            # Use yfinance download instead of Ticker to avoid quoteSummary calls
-            data = yf.download(
-                ticker,
-                start=start_date,
-                end=end_date,
-                progress=False,
-                auto_adjust=True,
-                timeout=15
-            )
-            
-            if data is None or data.empty:
-                raise ValueError(f"No data available for ticker: {ticker}")
-            
-            # Use Close price
-            if 'Close' not in data.columns:
-                raise ValueError("No Close price data found")
-            
-            data = data[['Close']].copy()
-            
-            # Get the most recent days
-            data = data.tail(days)
-            
-            if len(data) < 30:
-                raise ValueError(f"Insufficient data points ({len(data)}) for training. Need at least 30 days.")
-            
-            print(f"yFinance success: {data.shape[0]} days of data for {ticker}")
-            return data
-            
-        except Exception as e:
-            error_msg = f"yfinance failed: {str(e)}"
-            print(error_msg)
-            raise Exception(error_msg)
+        # Try with multiple proxies
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                proxy = self.get_random_proxy()
+                proxy_dict = None
+                
+                if proxy:
+                    print(f"Attempt {attempt + 1} with proxy: {proxy}")
+                    proxy_dict = {'http': proxy, 'https': proxy}
+                else:
+                    print(f"Attempt {attempt + 1} without proxy")
+
+                data = yf.download(
+                    ticker,
+                    start=start_date,
+                    end=end_date,
+                    progress=False,
+                    auto_adjust=True,
+                    timeout=30,
+                    threads=False,
+                    proxy=proxy_dict
+                )
+                
+                if data is None or data.empty:
+                    raise ValueError(f"No data returned for ticker: {ticker}")
+                
+                if 'Close' not in data.columns:
+                    for col in ['Adj Close', 'Open', 'High', 'Low']:
+                        if col in data.columns:
+                            data = data[[col]].copy()
+                            data.columns = ['Close']
+                            print(f"Using {col} as Close price")
+                            break
+                    else:
+                        raise ValueError("No price data columns found")
+                
+                data = data[['Close']].copy()
+                data = data.tail(days)
+                
+                if len(data) < 30:
+                    raise ValueError(f"Insufficient data points ({len(data)}) for training")
+                
+                print(f"yFinance success: {data.shape[0]} days of data for {ticker}")
+                return data
+                
+            except Exception as e:
+                print(f"Attempt {attempt + 1} failed: {e}")
+                if attempt == max_retries - 1:
+                    raise Exception(f"All proxy attempts failed for {ticker}: {str(e)}")
+                time.sleep(2)  # Wait before retrying
 
     def preprocess_data(self, data):
         data = data[["Close"]]
@@ -97,7 +149,6 @@ class StockPredictor:
 
         self.current_model = model_name
         
-        # Clean up memory
         del X_train, X_test, y_train, y_test, y_pred
         gc.collect()
         
@@ -158,7 +209,6 @@ class StockPredictor:
         plot_url2 = base64.b64encode(img2.getvalue()).decode()
         plt.close()
 
-        # Clean up memory
         del img1, img2
         gc.collect()
 

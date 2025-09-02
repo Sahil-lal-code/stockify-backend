@@ -7,7 +7,8 @@ import traceback
 import gc
 import yfinance as yf
 from datetime import datetime, timedelta
-import time  # <-- Add this import
+import time
+import requests
 
 app = Flask(__name__)
 
@@ -19,7 +20,6 @@ predictor = StockPredictor()
 @app.route('/predict', methods=['POST', 'OPTIONS'])
 def predict():
     if request.method == 'OPTIONS':
-        # Handle preflight requests properly
         response = jsonify({'message': 'CORS preflight'})
         response.headers.add("Access-Control-Allow-Origin", "*")
         response.headers.add("Access-Control-Allow-Headers", "Content-Type")
@@ -35,14 +35,12 @@ def predict():
         model_name = data.get('model', 'Linear Regression')
         days = int(data.get('days', 1))
         
-        # Validate input - limit to prevent overload
         if days > 10:
             days = 10
             print(f"Days limited to 10 for performance")
         
         print(f"Processing: {ticker}, {model_name}, {days} days")
         
-        # Fetch and process data
         stock_data = predictor.fetch_data(ticker)
         print("Data fetched successfully")
             
@@ -51,18 +49,15 @@ def predict():
         
         print("Model trained successfully")
         
-        # Make predictions
         last_data_point = np.array(processed_data.drop(['Prediction'], axis=1))[-1:]
         predictions = predictor.predict(model, last_data_point, days)
         
         print("Predictions generated")
         
-        # Generate plots
         plot_url1, plot_url2 = predictor.get_plots(stock_data, predictions, ticker)
         
         print("Plots generated")
         
-        # Create response
         response = {
             'ticker': ticker,
             'current_price': round(float(stock_data['Close'][-1]), 2),
@@ -77,7 +72,6 @@ def predict():
             'status': 'success'
         }
         
-        # Clean up memory
         del stock_data, processed_data, model, predictions
         gc.collect()
         
@@ -108,12 +102,10 @@ def popular_stocks():
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """Health check endpoint for Render"""
     return jsonify({'status': 'healthy', 'message': 'Server is running'})
 
 @app.route('/test', methods=['GET'])
 def test_endpoint():
-    """Simple test endpoint without ML"""
     try:
         return jsonify({
             'message': 'Test successful', 
@@ -123,16 +115,43 @@ def test_endpoint():
     except Exception as e:
         return jsonify({'error': str(e), 'status': 'error'}), 500
 
+@app.route('/proxy-test', methods=['GET'])
+def proxy_test():
+    """Test proxy functionality"""
+    try:
+        # Test direct connection
+        direct_response = requests.get('https://httpbin.org/ip', timeout=10)
+        direct_ip = direct_response.json().get('origin', 'Unknown')
+        
+        # Test with a proxy
+        proxy = predictor.get_random_proxy()
+        proxy_response = requests.get(
+            'https://httpbin.org/ip',
+            proxies={'http': proxy, 'https': proxy},
+            timeout=10
+        )
+        proxy_ip = proxy_response.json().get('origin', 'Unknown')
+        
+        return jsonify({
+            'direct_ip': direct_ip,
+            'proxy_ip': proxy_ip,
+            'proxy_used': proxy,
+            'status': 'success'
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'error': str(e),
+            'message': 'Proxy test failed',
+            'status': 'error'
+        }), 500
+
 @app.route('/debug/<ticker>', methods=['GET'])
 def debug_ticker(ticker):
-    """Debug endpoint to check yfinance data"""
     try:
         print(f"Debugging ticker: {ticker}")
+        time.sleep(2)
         
-        # Add rate limiting
-        time.sleep(2)  # Wait 2 seconds between debug requests
-        
-        # Use download instead of Ticker to avoid rate limiting
         end_date = datetime.now()
         start_date = end_date - timedelta(days=30)
         
