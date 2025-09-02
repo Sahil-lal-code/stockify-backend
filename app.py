@@ -1,20 +1,14 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from model import StockPredictor
-import json
-from datetime import datetime
 import numpy as np
 import os
 import traceback
 import gc
-import yfinance as yf
-from datetime import datetime, timedelta
-import pandas as pd
-import time
 
 app = Flask(__name__)
 
-# Configure CORS properly - ONLY ONCE
+# Configure CORS properly
 CORS(app)
 
 predictor = StockPredictor()
@@ -46,11 +40,7 @@ def predict():
         print(f"Processing: {ticker}, {model_name}, {days} days")
         
         # Fetch and process data
-        stock_data, error_message = predictor.fetch_data(ticker)
-        if error_message and "mock data" not in error_message:
-            print("Error fetching data:", error_message)
-            return jsonify({'error': error_message, 'status': 'error'}), 400
-        
+        stock_data = predictor.fetch_data(ticker)
         print("Data fetched successfully")
             
         processed_data = predictor.preprocess_data(stock_data)
@@ -84,10 +74,6 @@ def predict():
             'status': 'success'
         }
         
-        # Add warning if using mock data
-        if error_message and "mock data" in error_message:
-            response['warning'] = error_message
-        
         # Clean up memory
         del stock_data, processed_data, model, predictions
         gc.collect()
@@ -99,20 +85,12 @@ def predict():
         print("Error in prediction:", str(e))
         traceback.print_exc()
         return jsonify({
-            'error': 'Internal server error during prediction',
+            'error': str(e),
             'status': 'error'
         }), 500
 
-@app.route('/popular', methods=['GET', 'OPTIONS'])
+@app.route('/popular', methods=['GET'])
 def popular_stocks():
-    if request.method == 'OPTIONS':
-        # Handle preflight for popular endpoint
-        response = jsonify({'message': 'CORS preflight'})
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
-        response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
-        return response
-    
     popular = [
         {'ticker': 'AAPL', 'name': 'Apple Inc.'},
         {'ticker': 'MSFT', 'name': 'Microsoft Corporation'},
@@ -140,48 +118,6 @@ def test_endpoint():
             'test_data': [100, 105, 110, 115, 120]
         })
     except Exception as e:
-        return jsonify({'error': str(e), 'status': 'error'}), 500
-
-@app.route('/debug/<ticker>', methods=['GET', 'OPTIONS'])
-def debug_ticker(ticker):
-    if request.method == 'OPTIONS':
-        # Handle preflight for debug endpoint
-        response = jsonify({'message': 'CORS preflight'})
-        response.headers.add("Access-Control-Allow-Origin", "*")
-        response.headers.add("Access-Control-Allow-Headers", "Content-Type")
-        response.headers.add("Access-Control-Allow-Methods", "GET, OPTIONS")
-        return response
-    
-    """Debug endpoint to check yfinance data"""
-    try:
-        print(f"Debugging ticker: {ticker}")
-        time.sleep(1)
-        
-        end_date = datetime.now()
-        start_date = end_date - timedelta(days=7)
-        
-        print(f"Testing yfinance for {ticker} from {start_date} to {end_date}")
-        
-        try:
-            data1 = yf.download(ticker, start=start_date, end=end_date, 
-                               progress=False, auto_adjust=True, timeout=5)
-            shape1 = data1.shape if data1 is not None else 'None'
-        except Exception as e:
-            shape1 = f"Error: {str(e)}"
-        
-        shape2 = "Skipped to avoid rate limiting"
-        
-        return jsonify({
-            'ticker': ticker,
-            'method1_shape': str(shape1),
-            'method2_shape': shape2,
-            'status': 'success',
-            'note': 'Rate limiting protection active'
-        })
-        
-    except Exception as e:
-        print(f"Debug error: {str(e)}")
-        traceback.print_exc()
         return jsonify({'error': str(e), 'status': 'error'}), 500
 
 if __name__ == '__main__':
