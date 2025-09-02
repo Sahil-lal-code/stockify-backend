@@ -14,6 +14,8 @@ import base64
 import gc
 import time
 import random
+import requests
+import os
 
 class StockPredictor:
     def __init__(self):
@@ -23,49 +25,94 @@ class StockPredictor:
         }
         self.current_model = "Linear Regression"
         self.last_request_time = 0
-        self.request_delay = 2  # seconds between requests
+        self.request_delay = 1  # 1 second between API calls
 
     def fetch_data(self, ticker, days=60):
-        # Rate limiting: wait between requests
+        # Rate limiting
         current_time = time.time()
         time_since_last_request = current_time - self.last_request_time
         if time_since_last_request < self.request_delay:
             sleep_time = self.request_delay - time_since_last_request
-            print(f"Rate limiting: sleeping for {sleep_time:.2f} seconds")
             time.sleep(sleep_time)
         
         self.last_request_time = time.time()
-        
         end_date = datetime.now()
-        start_date = end_date - timedelta(days=days)
         
-        print(f"Fetching data for {ticker} from {start_date} to {end_date}")
+        print(f"Fetching data for {ticker} for {days} days")
 
+        # Try Alpha Vantage first (primary)
+        alpha_data, alpha_error = self.fetch_data_alpha_vantage(ticker, days)
+        if alpha_data is not None:
+            print("✓ Using Alpha Vantage data")
+            return alpha_data, None
+
+        # Fallback to yfinance
+        yfinance_data, yfinance_error = self.fetch_data_yfinance(ticker, days, end_date)
+        if yfinance_data is not None:
+            print("✓ Using yfinance data")
+            return yfinance_data, None
+
+        # If both fail, return error (no mock data)
+        error_msg = f"All data sources failed: Alpha Vantage - {alpha_error}, yfinance - {yfinance_error}"
+        print(f"✗ {error_msg}")
+        return None, error_msg
+
+    def fetch_data_alpha_vantage(self, ticker, days=60):
+        """Fetch data from Alpha Vantage API"""
         try:
-            # Try with retries and rate limiting
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    data = yf.download(
-                        ticker, 
-                        start=start_date, 
-                        end=end_date, 
-                        progress=False,
-                        auto_adjust=True,
-                        timeout=10  # Add timeout
-                    )
-                    break  # Success, break out of retry loop
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        raise e
-                    print(f"Attempt {attempt + 1} failed, retrying...")
-                    time.sleep(2)  # Wait before retry
+            API_KEY = os.environ.get('ALPHA_VANTAGE_API_KEY', 'demo')
+            print(f"Trying Alpha Vantage for {ticker}")
             
-            print(f"Downloaded data shape: {data.shape if data is not None else 'None'}")
+            url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={ticker}&apikey={API_KEY}&outputsize=compact"
+            
+            response = requests.get(url, timeout=10)
+            data = response.json()
+            
+            if 'Time Series (Daily)' in data:
+                time_series = data['Time Series (Daily)']
+                dates = []
+                prices = []
+                
+                # Get the most recent days
+                for date, values in list(time_series.items())[:days]:
+                    dates.append(pd.to_datetime(date))
+                    prices.append(float(values['4. close']))  # Use closing price
+                
+                # Reverse to get chronological order (oldest first)
+                dates.reverse()
+                prices.reverse()
+                
+                df = pd.DataFrame({'Close': prices}, index=dates)
+                print(f"Alpha Vantage success: {df.shape[0]} days of data")
+                return df, None
+            else:
+                error_msg = data.get('Note', 'Alpha Vantage API limit reached') if 'Note' in data else 'No time series data found'
+                print(f"Alpha Vantage error: {error_msg}")
+                return None, error_msg
+                
+        except Exception as e:
+            error_msg = f"Alpha Vantage failed: {str(e)}"
+            print(error_msg)
+            return None, error_msg
+
+    def fetch_data_yfinance(self, ticker, days=60, end_date=None):
+        """Fallback to yfinance if Alpha Vantage fails"""
+        try:
+            if end_date is None:
+                end_date = datetime.now()
+            start_date = end_date - timedelta(days=days * 2)  # Get extra data
+            
+            data = yf.download(
+                ticker, 
+                start=start_date, 
+                end=end_date, 
+                progress=False,
+                auto_adjust=True,
+                timeout=10
+            )
             
             if data is None or data.empty:
-                print("Data is empty, generating mock data...")
-                return self.generate_mock_data(days, end_date), "Using mock data (yfinance failed)"
+                return None, "No data from yfinance"
             
             # Ensure we have the right columns
             if 'Close' not in data.columns:
@@ -80,35 +127,16 @@ class StockPredictor:
             else:
                 data = data[['Close']].copy()
             
-            print(f"Final data shape: {data.shape}")
+            # Get the most recent days
+            data = data.tail(days)
+            
+            print(f"yFinance success: {data.shape[0]} days of data")
             return data, None
-
+            
         except Exception as e:
-            error_msg = f"Error fetching data for {ticker}: {str(e)}"
+            error_msg = f"yfinance failed: {str(e)}"
             print(error_msg)
-            return self.generate_mock_data(days, end_date), "Using mock data (yfinance error)"
-
-    def generate_mock_data(self, days, end_date):
-        """Generate realistic mock stock data"""
-        print("Generating realistic mock data...")
-        dates = pd.date_range(end=end_date, periods=days, freq='D')
-        
-        # Create more realistic mock data with trends and noise
-        base_price = 150 + random.randint(-50, 50)
-        trend = random.uniform(-2, 2)  # Daily trend
-        volatility = random.uniform(1, 3)  # Price volatility
-        
-        mock_prices = []
-        current_price = base_price
-        
-        for _ in range(days):
-            # Random walk with trend
-            current_price += trend + random.gauss(0, volatility)
-            current_price = max(10, current_price)  # Don't go below $10
-            mock_prices.append(current_price)
-        
-        data = pd.DataFrame({'Close': mock_prices}, index=dates)
-        return data
+            return None, error_msg
 
     def preprocess_data(self, data):
         data = data[["Close"]]
@@ -158,16 +186,17 @@ class StockPredictor:
 
     def get_plots(self, data, predictions, ticker):
         # Plot 1: Historical vs Predicted
-        plt.figure(figsize=(10, 6))
-        plt.plot(data.index, data["Close"], label="Historical Prices", color="#034F68")
+        plt.figure(figsize=(12, 6))
+        plt.plot(data.index, data["Close"], label="Historical Prices", color="#034F68", linewidth=2)
         future_dates = [data.index[-1] + timedelta(days=i) for i in range(1, len(predictions) + 1)]
-        plt.plot(future_dates, predictions, label="Predicted Prices", color="orange")
-        plt.scatter(future_dates, predictions, color="red")
-        plt.title(f"{ticker} - Historical vs Predicted Prices")
+        plt.plot(future_dates, predictions, label="Predicted Prices", color="orange", linewidth=2)
+        plt.scatter(future_dates, predictions, color="red", s=50)
+        plt.title(f"{ticker} Stock Price Prediction")
         plt.xlabel("Date")
         plt.ylabel("Price ($)")
         plt.legend()
-        plt.grid(True)
+        plt.grid(True, alpha=0.3)
+        plt.xticks(rotation=45)
         plt.tight_layout()
         
         img1 = io.BytesIO()
@@ -178,13 +207,14 @@ class StockPredictor:
 
         # Plot 2: Only Predicted Prices
         plt.figure(figsize=(10, 6))
-        plt.plot(future_dates, predictions, label="Predicted Prices", color="orange", linewidth=2)
-        plt.scatter(future_dates, predictions, color="red", s=50)
+        plt.plot(future_dates, predictions, label="Predicted Prices", color="orange", linewidth=3)
+        plt.scatter(future_dates, predictions, color="red", s=60)
         plt.title(f"{ticker} - Future Price Predictions")
         plt.xlabel("Future Dates")
         plt.ylabel("Predicted Price ($)")
         plt.legend()
-        plt.grid(True)
+        plt.grid(True, alpha=0.3)
+        plt.xticks(rotation=45)
         plt.tight_layout()
         
         img2 = io.BytesIO()
