@@ -1,18 +1,19 @@
-
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from model import StockPredictor
 import json
-from datetime import datetime
 import numpy as np
 
 app = Flask(__name__)
-CORS(app, resources={
-    r"/predict": {"origins": "*"},
-    r"/popular": {"origins": "*"}
-})
+# Simplified CORS for initial deployment. We will secure this later.
+CORS(app) 
 
 predictor = StockPredictor()
+
+# Health check route for Render
+@app.route('/health')
+def health_check():
+    return jsonify({"status": "ok"}), 200
 
 @app.route('/predict', methods=['POST'])
 def predict():
@@ -52,13 +53,11 @@ def predict():
             'status': 'success'
         }
         
-        # Debug print
-        print("Complete response being sent:", json.dumps(response, indent=2))
-        
         return jsonify(response)
         
     except Exception as e:
         return jsonify({'error': str(e), 'status': 'error'}), 500
+
 @app.route('/popular', methods=['GET'])
 def popular_stocks():
     popular = [
@@ -73,5 +72,6 @@ def popular_stocks():
     ]
     return jsonify(popular)
 
-if __name__ == '__main__':
-    app.run(debug=True)
+# This part is now handled by Gunicorn, so we don't need the __main__ block for deployment
+# if __name__ == '__main__':
+#     app.run(debug=True)
