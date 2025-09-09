@@ -2,7 +2,7 @@ services:
   - type: web
     name: smart-stock-backend
     env: python
-    pythonVersion: 3.10
+    pythonVersion: "3.10"
     healthCheckPath: /health
     buildCommand: |
       pip install --upgrade pip
